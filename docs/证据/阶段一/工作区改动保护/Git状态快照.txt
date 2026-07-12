@@ -1,0 +1,32 @@
+源工作区: /Users/xingranya/Downloads/GitHub-clone/openvela-workspace/contest2026_130_xingshuangrenran
+HEAD: 1294cdf57561989536af6f7e11bccedf5aaf404a
+Tree: 14c5f42b5f14b99ead9c5a69d2b03f83feae286e
+状态: detached HEAD
+作者: liujinye
+提交时间: 2026-07-06T16:37:53+08:00
+提交标题: Initial commit: scaffold contest repo for team xingshuangrenran
+远端: openvela https://github.com/open-vela/contest2026_130_xingshuangrenran
+
+已修改文件:
+M app/hello_app/CMakeLists.txt
+M app/hello_app/Kconfig
+M app/hello_app/Make.defs
+M app/hello_app/Makefile
+M app/hello_app/README.md
+M app/hello_app/hello_app_main.c
+M board/contest_board/CMakeLists.txt
+M board/contest_board/Kconfig
+M board/contest_board/README.md
+M board/contest_board/configs/nsh/defconfig
+M board/contest_board/src/CMakeLists.txt
+M board/contest_board/src/board_boot.c
+M quickapp/hello_quickapp/README.md
+M quickapp/hello_quickapp/manifest.json
+M quickapp/hello_quickapp/src/pages/index/index.ux
+
+未跟踪文件:
+? .DS_Store
+
+改动统计:
+15 files changed, 27 insertions(+), 27 deletions(-)
+
