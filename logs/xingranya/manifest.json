@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "team_id": "contest2026_130_xingshuangrenran",
+  "github_login": "xingranya",
+  "generator": "claude-code-collector@1.2.0",
+  "updated_at": "2026-07-18T18:40:07.646Z",
+  "sessions": [
+    {
+      "session_id": "9585a451-6c0b-4b92-b4b2-0491bcd1e3e9",
+      "tool": "claude-code",
+      "started_at": "2026-07-18T18:40:05.908Z",
+      "last_event_at": "2026-07-18T18:40:05.908Z",
+      "event_count": 1847,
+      "raw_event_count": 2574,
+      "file_path": "logs/xingranya/2026-07-19/claude-code__9585a451-6c0b-4b92-b4b2-0491bcd1e3e9.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "claude-opus-4-8"
+    },
+    {
+      "session_id": "bb44ccd2-3aa3-42ec-9cd2-0b780396098d",
+      "tool": "claude-code",
+      "started_at": "2026-07-18T18:40:05.960Z",
+      "last_event_at": "2026-07-18T18:40:05.960Z",
+      "event_count": 767,
+      "raw_event_count": 1022,
+      "file_path": "logs/xingranya/2026-07-19/claude-code__bb44ccd2-3aa3-42ec-9cd2-0b780396098d.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "<synthetic>"
+    },
+    {
+      "session_id": "d4bf6e2f-a95f-4c74-a7d8-909075c9e4a0",
+      "tool": "claude-code",
+      "started_at": "2026-07-18T18:40:05.992Z",
+      "last_event_at": "2026-07-18T18:40:05.992Z",
+      "event_count": 3,
+      "raw_event_count": 6,
+      "file_path": "logs/xingranya/2026-07-19/claude-code__d4bf6e2f-a95f-4c74-a7d8-909075c9e4a0.jsonl",
+      "collection_mode": "cli",
+      "health": "ok"
+    }
+  ]
+}

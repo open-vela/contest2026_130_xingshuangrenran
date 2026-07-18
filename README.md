@@ -1,36 +1,44 @@
-# contest2026_130_xingshuangrenran
+# 你好 openvela — ESP32-S3-EYE 主动执行 AI 硬件助手
 
-👋 欢迎参加 **2026 首届 openvela AI 硬件开发者大赛**！
+> 2026 首届 openvela AI 硬件开发者大赛参赛作品 · 队伍 `contest2026_130_xingshuangrenran` · **AI 硬件产品创新**赛道
 
-这是组委会为你的队伍创建的**专属参赛仓库**（本仓为样例/模板，队伍编号 `130`；你看到的将是你自己的 `contest2026_<编号>_<队伍名>`）。比赛期间，你的全部参赛代码、打包产物与 AI Coding 日志都提交到这里。
+## 一、作品简介
 
-> 本仓既是「代码仓」，又内置了一键拉取整套 openvela 工程的 `repo` 清单（manifest）。你只需跟它打交道，**自始至终只动一个文件夹**。
+本作品在乐鑫 **ESP32-S3-EYE** 开发板上，基于 openvela（NuttX）与官方 `ai_agent` 框架，交付一个**多模态、可主动执行**的桌面 AI 硬件助手：
 
----
+- **语音唤醒**：以固定唤醒词「**你好，openvela**」触发，经火山引擎 ASR 识别、大模型应答、TTS 合成语音回复。
+- **视觉问答**：调用板载摄像头（`/dev/video0`）实时取帧并 JPEG 编码，交由 **MiMo v2.5** 视觉模型完成图文问答。
+- **中文屏显**：240×240 LCD（`/dev/fb0`，LVGL）以中文字体渲染对话与回复，含轻量 Markdown 清理。
+- **稳定联网**：针对 ESP32 Wi-Fi 首次握手失败、关联漂移、DNS/TLS 链路问题做了系统性修复与掉线自愈。
+- **移动伴侣**：附带 Android 控制端，通过 WebSocket 与设备联调并以 Markdown 渲染回复。
 
-## 一、先读这些官方文档
+## 二、选题方向
 
-**通用（所有赛道必读）：**
+**AI 硬件产品创新**。ESP32-S3-EYE 同时具备摄像头、麦克风、LCD 与 Wi-Fi，是「视觉 + 语音 + 屏显」多模态 AI 硬件的理想载体。本作品围绕「一句唤醒词即可发起多模态问答」的桌面助手场景展开，尽量复用 openvela 官方 `ai_agent` 能力，把定制集中在唤醒词、多模态取数与联网稳定性上。
 
-| 文档                                                                                                                                     | 用途                                           |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [《大赛总览》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/contest_overview.md)                        | 赛道、流程、评分、资源，建议先通读             |
-| [《参赛代码提交指南》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/code_submission_guide.md)           | 仓库获取、提交流程、时间与权限（**以此为准**） |
-| [《AI Coding 日志归集与提交手册》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_coding_log_guide.md) | 如何导出 AI 对话日志并提交到 `logs/`           |
+## 三、目录结构
 
-**按你的赛道选读（三选一）：**
+```text
+contest2026_130_xingshuangrenran/
+├── app/hello_app/          # 应用骨架，manifest 软链至 packages/demos/contest2026_130_hello_app
+├── quickapp/hello_quickapp/# 快应用骨架，软链至 packages/apps/contest2026_130_hello_quickapp
+├── board/contest_board/    # 板级适配骨架，软链至 vendor/openvela/boards/contest2026_130_board
+├── scripts/                # macOS 环境检查 / 构建 / 烧录 / 串口监视脚本
+├── docs/                   # 规格、进度与证据
+│   ├── 比赛开发规格.md      # 作品规格事实源
+│   ├── progress/           # 分阶段开发进度
+│   └── 证据/               # 真机基线、构建日志、代码改动 patch 等可复现证据
+│       └── 代码改动/        # 对 packages/ai_agent、nuttx 的补丁与说明
+├── logs/                   # AI Coding 日志（Claude Code 会话，凭据已脱敏）
+├── artifacts/              # 构建产物留存
+└── contest2026_130_xingshuangrenran.xml  # repo manifest（含 openvela.xml）
+```
 
-| 赛道                  | 教程导航                                                                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 快应用 / 手表应用创新 | [快应用教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/quickapp/quickapp_guide_index.md)                         |
-| AI 硬件产品创新       | [AI 硬件赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_hardware/ai_hardware_guide_index.md)              |
-| 新硬件适配            | [新硬件适配赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/hardware_porting/hardware_porting_guide_index.md) |
+作品核心逻辑位于 openvela 公共仓 `packages/ai_agent`（语音、视觉、网络），按大赛规则不写入本仓本体，改动以补丁形式留存于 `docs/证据/代码改动/`，可一键复现。
 
----
+## 四、运行方式
 
-## 二、第一步：拉取完整工程
-
-用组委会提供的命令一键拉取「openvela 全量源码 + 你的专属仓」：
+### 1. 拉取完整工程
 
 ```bash
 repo init -u https://github.com/open-vela/contest2026_130_xingshuangrenran \
@@ -38,111 +46,54 @@ repo init -u https://github.com/open-vela/contest2026_130_xingshuangrenran \
 repo sync -c -j8
 ```
 
-同步后，你的整个仓库位于工作区的 `contest2026_130_xingshuangrenran/`，openvela 全量源码在外层（`nuttx/`、`apps/`、`packages/`、`vendor/` 等）。
-
----
-
-## 三、第二步：在哪里写代码
-
-**只在自己的仓目录 `contest2026_130_xingshuangrenran/` 里开发。** 不同作品形态放在对应子目录，manifest 会通过 `<linkfile>` 把它们**软链**到 openvela 编译树该在的位置——你不用手动 copy：
-
-| 作品形态 | 你的代码放这里             | 系统自动映射到                                 |
-| -------- | -------------------------- | ---------------------------------------------- |
-| 应用     | `app/hello_app/`           | `packages/demos/contest2026_130_hello_app`     |
-| 快应用   | `quickapp/hello_quickapp/` | `packages/apps/contest2026_130_hello_quickapp` |
-| 板级适配 | `board/contest_board/`     | `vendor/openvela/boards/contest2026_130_board` |
-
-> 用不到的形态目录可以删掉；新增作品时按同样规则加子目录，并在 `contest2026_130_xingshuangrenran.xml` 里补一条 `<linkfile>` 映射即可。**生产仓库（packages/nuttx/vendor 等）零改动。**
-
-建议仓库目录约定（便于评委定位）：
-
-```text
-app/ | quickapp/ | board/   # 你的作品代码
-logs/                       # AI Coding 日志（主动导出后提交，格式见 logs/README.md）
-README.md                   # 作品说明（提交前请改成你自己的，见第六节）
-```
-
-> 仓内附带了一个 `.gitignore.example`，给出了**编译产物**等不需要进仓的文件示例。如需启用，`cp .gitignore.example .gitignore` 后按需增删即可。**注意 `logs/` 下最终导出的 AI Coding 日志必须提交，不要忽略。**
->
-> `logs/` 的目录结构与提交格式见 [logs/README.md](logs/README.md)。
-
----
-
-## 四、第三步：编译与运行
-
-编译/运行步骤随作品形态不同而不同，请参考你所在赛道的教程导航：
-
-- 快应用 / 手表应用：[快应用教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/quickapp/quickapp_guide_index.md)（含模拟器与开发板部署）。
-- AI 硬件产品创新：[AI 硬件赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_hardware/ai_hardware_guide_index.md)（环境搭建、编译烧录、Skill 开发）。
-- 新硬件适配：[新硬件适配赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/hardware_porting/hardware_porting_guide_index.md)（BSP 移植、最小 NSH 基线）。
-
-子目录已通过 manifest 中的 `<linkfile>` 软链进 openvela 编译树，因此构建在 openvela 工作区**根目录**（即你这个仓的上一级）进行。openvela 使用 `build.sh` 作为统一入口，接收一个 **board config 路径**作为参数：
+### 2. 准备工具链（macOS / Apple Silicon）
 
 ```bash
-# 进入 openvela 工作区根目录（你的仓的上一级）
-cd ..
-
-# 通用语法：第一个参数是 board config 路径，第二个参数可以是 menuconfig / distclean 等
-./build.sh <board-config-path> [menuconfig|distclean] [-j8]
+cd contest2026_130_xingshuangrenran
+bash scripts/检查开发环境.sh     # 检查 Xtensa GCC/Ninja/esptool 等
+bash scripts/macos环境.sh        # 冻结 macOS 构建/烧录适配
 ```
 
-> 具体的 board config 路径、目标产物、模拟器/真机部署方式请以你所在赛道的教程导航为准。本仓 `app/` `quickapp/` `board/` 三个示例骨架对应的 Kconfig 选项可通过 `menuconfig` 启用。
+### 3. 应用作品补丁并构建
 
----
+```bash
+# 应用对公共仓的改动（唤醒词、联网自愈、TLS 诊断、板级网络配置）
+git -C ../packages/ai_agent apply docs/证据/代码改动/packages_ai_agent.patch
+git -C ../nuttx apply docs/证据/代码改动/nuttx_net.patch
 
-## 五、第四步：提交作品
+# 构建固件，产物为 ../nuttx/nuttx.bin
+bash scripts/构建固件.sh
+```
 
-1. **fork** 你的专属仓 → 开发 → `git commit` 并推送 → 向专属仓发起 **Pull Request**，可**自行 review 并合入**（无需等组委会）。
-2. **AI Coding 日志**：与 AI 工具的对话会自动记录到本机 staging（不会自动上传），需你**主动导出/打包**选定会话到仓内 `logs/` 目录后一并提交。详见[《AI Coding 日志归集与提交手册》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_coding_log_guide.md)。
-3. 若需改动 **nuttx 等公共仓库**，不在本仓改，而是 fork 对应公共仓、以 PR 提交到 `dev-ai-contest-2026` 分支，由组委会 review 后合入。
+### 4. 烧录与运行
 
-> ⏰ **提交作品截止：9 月 20 日**。截止后统一收回 push 权限，仍可查看 / clone。
->
-> 获奖后再按要求将作品 PR 至 openvela 上游对应仓库（走标准 PR + CI 流程）。
+```bash
+bash scripts/烧录固件.sh          # 通过 esptool 烧录 ESP32-S3
+bash scripts/串口监视.sh          # 观察启动日志与设备节点
+```
 
-### 关于 PR 与 CLA
+设备启动到 NSH 后，通过串口注入运行期凭据（**不入库**）：
 
-- 本仓所有改动通过 **Pull Request** 合入（分支保护强制，可自行合入自己的 PR）。
-- 首次贡献需在[**官网签署 CLA**](https://openvela.com/#/community/cla)；PR 上会自动跑 `cla/signature` 检查，在官网签署成功后，在 PR 评论 `/check-cla` 复检即可通过。
+```bash
+set_wifi <SSID> <PASSWORD>                 # Wi-Fi 联网
+set_llm  <host> <model> <key>              # MiMo 大模型
+set_volc_asr <AppID> <Token> <Cluster>     # 火山语音识别
+```
 
----
+配置完成后，对麦克风说「**你好，openvela，……**」即可发起语音问答；摄像头视觉与中文屏显随对话自动工作。
 
-## 六、提交前：把本 README 改成你的作品说明
-
-本文件目前是组委会给的**使用说明书**。**作品提交前，请把它替换成你自己作品的说明**，方便评委快速了解你做了什么、怎么跑起来。建议至少包含以下内容：
-
-```markdown
-# <你的作品名>
-
-## 一、作品简介
-<一句话/一段话说明这个作品是什么、解决什么问题、亮点在哪>
-
-## 二、选题方向
-<快应用 / 手表应用创新 ｜ AI 硬件产品创新 ｜ 新硬件适配 ｜ 自定方向，并简述理由>
-
-## 三、目录结构
-<列出你这个仓里各目录/文件的作用，例如：>
-- `app/xxx/`        — <说明>
-- `board/xxx/`      — <说明>
-- `quickapp/xxx/`   — <说明>
-- `logs/`           — AI Coding 日志
-- `docs/` 或其他    — <说明>
-
-## 四、运行方式
-<拉取工程后，如何编译、烧录/部署、运行的完整步骤；最好能让评委照着一步步复现>
+> `/data` 为临时文件系统，重新烧录后需再次注入上述凭据。
 
 ## 五、AI Coding 使用说明
-<说明本作品如何借助 AI 辅助开发：
-- 在需求拆解 / 方案设计 / 编码 / 调试 / 文档等环节如何与 AI 协作；
-- AI 对开发效率或质量带来的实际帮助。
-完整对话日志见 logs/ 目录>
-```
 
-> 提示：将会根据「作品本身 + 你的 README 说明 + `logs/` 里的 AI Coding 日志」来理解和评估你的作品，README 写清楚很重要。
+本作品全程借助 **Claude Code** 协作开发，`logs/xingranya/` 保留了完整会话日志（已按安全要求对 Wi-Fi 密码、MiMo Key 等凭据脱敏，事件级 `redacted_count` 可审计）。AI 在以下环节发挥了实际作用：
+
+- **需求拆解与规划**：将「多模态 AI 硬件助手」拆分为工作区基线、真机烟测、多模态、可靠性等阶段（见 `docs/progress/`）。
+- **深度调试**：定位 ESP32 Wi-Fi 首次 4 次握手失败、残留 IP 假联网、DNS/TLS 真实错误码（`-0x52`/`-0x4c`）等疑难问题，并给出网络栈与应用层的联合修复。
+- **多模态集成**：完成 V4L2 取帧 + JPEG 编码 + MiMo 视觉 Tool、240×240 LVGL 中文界面、火山 ASR/TTS 与唤醒词闸门的代码集成。
+- **跨平台适配**：冻结 macOS/Apple Silicon 的 Xtensa 工具链、构建与烧录脚本。
+- **文档与证据**：生成规格、进度与可复现的代码改动补丁。
 
 ---
 
-## 附：仓库命名规范
-
-`contest2026_<编号>_<队伍名>` — 编号三位零填充；队名 slug（全小写、英文/拼音、连字符）。例：`contest2026_130_xingshuangrenran`。
-（仓库由组委会统一创建，**每队仅一个仓**，无需自行命名。）
+*本仓所有文档与证据均不含任何 Wi-Fi SSID/密码、MiMo Key、火山 AppID/Token 或 Tavily Key；运行期凭据一律经串口注入 `/data`。*
