@@ -1,0 +1,524 @@
+diff --git a/defconfigs/esp32s3-eye/esp32s3-eye_defconfig b/defconfigs/esp32s3-eye/esp32s3-eye_defconfig
+index 055d1a5..5499b16 100644
+--- a/defconfigs/esp32s3-eye/esp32s3-eye_defconfig
++++ b/defconfigs/esp32s3-eye/esp32s3-eye_defconfig
+@@ -50,8 +50,8 @@ CONFIG_FS_TMPFS=y
+ CONFIG_IDLETHREAD_STACKSIZE=3072
+ CONFIG_INIT_ENTRYPOINT="nsh_main"
+ CONFIG_INTELHEX_BINARY=y
+-CONFIG_IOB_NBUFFERS=64
+-CONFIG_IOB_THROTTLE=16
++CONFIG_IOB_NBUFFERS=256
++CONFIG_IOB_THROTTLE=24
+ CONFIG_LCD_FRAMEBUFFER=y
+ CONFIG_LCD_PORTRAIT=y
+ CONFIG_LCD_ST7789_BGR=y
+@@ -105,3 +105,6 @@ CONFIG_WIRELESS_WAPI=y
+ CONFIG_WIRELESS_WAPI_CMDTOOL=y
+ CONFIG_WIRELESS_WAPI_INITCONF=y
+ CONFIG_WIRELESS_WAPI_STACKSIZE=8192
++CONFIG_NET_TCP_WINDOW_SCALE=y
++CONFIG_NETDB_DNSSERVER_IPv4ADDR=0xdf050505
++CONFIG_NETDB_DNSSERVER_NAMESERVERS=2
+diff --git a/src/infra/network_manager.c b/src/infra/network_manager.c
+index 00cc296..4fdf5fd 100644
+--- a/src/infra/network_manager.c
++++ b/src/infra/network_manager.c
+@@ -16,10 +16,14 @@
+ 
+ #include "network_manager.h"
+ #include "agent_compat.h"
++#include "infra/config_store.h"
+ 
+ #include <arpa/inet.h>
++#include <errno.h>
+ #include <ifaddrs.h>
+ #include <netinet/in.h>
++#include <netutils/netlib.h>
++#include <stdio.h>
+ #include <string.h>
+ #include <sys/socket.h>
+ #include <sys/types.h>
+@@ -101,6 +105,56 @@ const char* network_get_ip(void)
+     return s_ip_str;
+ }
+ 
++int network_set_dns(const char* primary, const char* secondary)
++{
++    struct in_addr dns_addr;
++    FILE* fp = NULL;
++
++    if (!primary || primary[0] == '\0') {
++        syslog(LOG_ERR, "[%s] set_dns: primary DNS required\n", TAG);
++        return -EINVAL;
++    }
++
++    if (inet_pton(AF_INET, primary, &dns_addr) != 1
++        || netlib_set_ipv4dnsaddr(&dns_addr) != OK) {
++        syslog(LOG_ERR, "[%s] Invalid primary DNS: %s\n", TAG, primary);
++        return -EINVAL;
++    }
++
++    if (secondary && secondary[0] != '\0') {
++        if (inet_pton(AF_INET, secondary, &dns_addr) != 1
++            || netlib_set_ipv4dnsaddr(&dns_addr) != OK) {
++            syslog(LOG_ERR, "[%s] Invalid secondary DNS: %s\n",
++                TAG, secondary);
++            return -EINVAL;
++        }
++    }
++
++    /* 同步写出诊断文件；实际解析器使用上面的 NuttX nameserver 列表。 */
++    fp = fopen("/tmp/resolv.conf", "w");
++    if (!fp) {
++        syslog(LOG_ERR, "[%s] Cannot open /tmp/resolv.conf: %d\n",
++            TAG, errno);
++        return -errno;
++    }
++
++    fprintf(fp, "nameserver %s\n", primary);
++    if (secondary && secondary[0] != '\0') {
++        fprintf(fp, "nameserver %s\n", secondary);
++    }
++
++    fclose(fp);
++
++    claw_config_set("net.dns_primary", primary);
++    if (secondary && secondary[0] != '\0') {
++        claw_config_set("net.dns_secondary", secondary);
++    }
++
++    syslog(LOG_INFO, "[%s] DNS configured: %s %s\n", TAG,
++        primary, (secondary && secondary[0]) ? secondary : "");
++    return OK;
++}
++
+ /* ── WiFi connect (real hardware only) ───────────────────────── */
+ 
+ #if defined(CONFIG_ARCH_CHIP_GOLDFISH_ARM64) || defined(CONFIG_ARCH_CHIP_QEMU_ARM)
+@@ -565,43 +619,6 @@ int network_reconnect(void)
+     return OK;
+ }
+ 
+-int network_set_dns(const char* primary, const char* secondary)
+-{
+-    FILE* fp = NULL;
+-    int ret = ERROR;
+-
+-    if (!primary || primary[0] == '\0') {
+-        syslog(LOG_ERR, "[%s] set_dns: primary DNS required\n", TAG);
+-        return -EINVAL;
+-    }
+-
+-    fp = fopen("/tmp/resolv.conf", "w");
+-    if (!fp) {
+-        syslog(LOG_ERR, "[%s] Cannot open /tmp/resolv.conf: %d\n",
+-            TAG, errno);
+-        return -errno;
+-    }
+-
+-    fprintf(fp, "nameserver %s\n", primary);
+-    if (secondary && secondary[0] != '\0') {
+-        fprintf(fp, "nameserver %s\n", secondary);
+-    }
+-
+-    fclose(fp);
+-
+-    /* Persist to config_store */
+-    claw_config_set("net.dns_primary", primary);
+-    if (secondary && secondary[0] != '\0') {
+-        claw_config_set("net.dns_secondary", secondary);
+-    }
+-
+-    syslog(LOG_INFO, "[%s] DNS configured: %s %s\n", TAG,
+-        primary, (secondary && secondary[0]) ? secondary : "");
+-
+-    ret = OK;
+-    return ret;
+-}
+-
+ /* ── BLE state callback stub ──────────────────────────────────── */
+ 
+ static void ble_state_callback(bool connected)
+@@ -769,8 +786,17 @@ int network_wifi_reconnect(void)
+ /* Real hardware: use NuttX wapi shell command to join WiFi */
+ #include "infra/config_store.h"
+ #include "agent_config.h"
++#include <nuttx/wireless/wireless.h>
++#include <pthread.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <sys/ioctl.h>
++
++/* Wi-Fi 关联 + DHCP 的最大尝试次数：覆盖 ESP32-S3 首次握手不完成、需要
++ * ifdown/ifup 重置后重连的情况。 */
++#define WIFI_CONNECT_MAX_ATTEMPTS 3
++
++static pthread_mutex_t s_wifi_connect_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+ /*
+  * Wrap src in single quotes for safe use inside a system() shell command.
+@@ -801,7 +827,83 @@ static int shell_quote(const char* src, char* buf, size_t buf_size)
+     return 0;
+ }
+ 
+-int network_wifi_connect(const char* iface, const char* ssid,
++/*
++ * 轮询检测 Wi-Fi 是否完成关联。ESP32-S3 首次关联的 4 次握手常失败，此时
++ * SIOCGIWAP 返回的 BSSID 为全 0 或全 0xff；握手成功后才是真实 AP MAC。
++ * 用它替代盲目 usleep：既能确认关联成功再走 DHCP，也能在握手失败时尽早
++ * 进入下一轮重置重连。timeout_ms 内关联成功返回 true，否则 false。
++ */
++static bool wifi_wait_associated(const char* dev, int timeout_ms)
++{
++    int sock = socket(AF_INET, SOCK_DGRAM, 0);
++    if (sock < 0) {
++        return false;
++    }
++
++    bool associated = false;
++    for (int elapsed = 0; elapsed < timeout_ms; elapsed += 500) {
++        struct iwreq req;
++        memset(&req, 0, sizeof(req));
++        strncpy(req.ifr_name, dev, IFNAMSIZ);
++
++        if (ioctl(sock, SIOCGIWAP, (unsigned long)&req) == 0) {
++            const unsigned char* bssid =
++                (const unsigned char*)req.u.ap_addr.sa_data;
++            bool all_zero = true;
++            bool all_ff = true;
++            for (int i = 0; i < 6; i++) {
++                if (bssid[i] != 0x00) {
++                    all_zero = false;
++                }
++                if (bssid[i] != 0xff) {
++                    all_ff = false;
++                }
++            }
++            if (!all_zero && !all_ff) {
++                associated = true;
++                break;
++            }
++        }
++
++        usleep(500000); /* 每 500ms 轮询一次 */
++    }
++
++    close(sock);
++    return associated;
++}
++
++/* ── WiFi 断线自动重连监控 ─────────────────────────────────── */
++
++static pthread_t s_wifi_monitor_thread;
++static volatile bool s_wifi_monitor_running = false;
++static char s_wifi_monitor_dev[16];
++
++/*
++ * 监控线程：每 5 秒检查一次关联状态，一旦掉线（BSSID 失效）就发起完整
++ * 重连（ifdown/ifup + 关联 + DHCP）。ESP32-S3 的 STA_DISCONNECT 自动重连
++ * 走 esp_wifi_connect 直连、不做接口重置，而首次握手失败需要 ifdown/ifup
++ * 重置才能成功，故驱动层重连无法自愈；这里在应用层用完整流程兜底，保证
++ * 掉线后网络能自动恢复。
++ */
++static void* wifi_monitor_thread(void* arg)
++{
++    (void)arg;
++    while (s_wifi_monitor_running) {
++        sleep(5);
++        if (!s_wifi_monitor_running) {
++            break;
++        }
++        /* 单次快速检查关联状态（BSSID 是否为真实 AP MAC）。 */
++        if (!wifi_wait_associated(s_wifi_monitor_dev, 800)) {
++            syslog(LOG_WARNING,
++                "[%s] WiFi link lost, auto-reconnecting...\n", TAG);
++            network_wifi_reconnect();
++        }
++    }
++    return NULL;
++}
++
++static int network_wifi_connect_locked(const char* iface, const char* ssid,
+     const char* pass)
+ {
+     if (!ssid || ssid[0] == '\0') {
+@@ -826,79 +928,141 @@ int network_wifi_connect(const char* iface, const char* ssid,
+ 
+     syslog(LOG_INFO, "[%s] Connecting WiFi SSID=%s on %s\n", TAG, ssid, dev);
+ 
+-    snprintf(cmd, sizeof(cmd), "ifup %s", dev); /* bring up iface first */
+-    system(cmd);
+-    usleep(500000); /* wait for driver ready */
++    /* 先保存凭证：即使后续关联或 DHCP 失败，重启后仍可自动重连。 */
++    agent_config_set(AGENT_CFG_KEY_WIFI_SSID, ssid);
++    agent_config_set(AGENT_CFG_KEY_WIFI_PASS,
++        (pass && pass[0]) ? pass : "");
++
++    /* ESP32-S3 Wi-Fi 首次关联常出现 4 次握手不完成（wapi show 的 AP 为
++     * 全 0xff），必须 ifdown/ifup 重置接口后重连才能握手成功；此外，错误
++     * 网段的静态兜底地址（如 10.0.0.2）会让 DHCP 拿不到租约，renew 前必须
++     * 清空 IP，让 DHCP 从 0.0.0.0 干净发起 DISCOVER。下面的重试循环同时
++     * 覆盖这两种情况。 */
++    int err = ERROR;
++    for (int attempt = 0; attempt < WIFI_CONNECT_MAX_ATTEMPTS; attempt++) {
++        if (attempt > 0) {
++            /* 重置接口，清除上一次失败关联的残留状态。 */
++            snprintf(cmd, sizeof(cmd), "ifdown %s", dev);
++            system(cmd);
++            usleep(1000000); /* 等驱动完全 down 再重新 up */
++        }
+ 
+-    snprintf(cmd, sizeof(cmd), "wapi mode %s 2", dev); /* MANAGED */
+-    system(cmd);
++        snprintf(cmd, sizeof(cmd), "ifup %s", dev); /* bring up iface first */
++        system(cmd);
++        usleep(6000000); /* 等 Wi-Fi 驱动就绪并完成扫描：system() 连续快速
++                          * 调用时，2s 内驱动来不及初始化并扫到 AP，导致随后
++                          * essid 关联握手失败，实测需约 6s */
+ 
+-    if (pass && pass[0]) {
+-        snprintf(cmd, sizeof(cmd), "wapi psk %s %s 3", dev, q_pass);
++        /* 默认世界安全域仅允许信道 1-11；国内路由器自动信道可能落在
++         * 12/13，导致扫描可见但无法关联。连接前显式设置 CN 域(1-13)。 */
++        snprintf(cmd, sizeof(cmd), "wapi country %s CN", dev);
+         system(cmd);
+-    }
+ 
+-    snprintf(cmd, sizeof(cmd), "wapi essid %s %s 1", dev, q_ssid);
+-    system(cmd);
+-    usleep(2000000); /* wait for AP association */
+-
+-    /* P1: verify WiFi association before requesting DHCP.
+-     * 'wapi status' always exits 0 (it just prints iface state), so
+-     * checking its return code is useless. Instead, parse the output
+-     * for "Not-Associated" which wapi prints when no AP is joined.
+-     * If popen fails we fall through and let network_wait_connected
+-     * handle the timeout. */
+-    {
+-        bool associated = true;
+-        snprintf(cmd, sizeof(cmd), "wapi status %s", dev);
+-        FILE* fp = popen(cmd, "r");
+-        if (fp) {
+-            char line[256];
+-            while (fgets(line, sizeof(line), fp)) {
+-                if (strstr(line, "Not-Associated")) {
+-                    associated = false;
+-                    break;
+-                }
+-            }
+-            pclose(fp);
++        snprintf(cmd, sizeof(cmd), "wapi mode %s 2", dev); /* MANAGED */
++        system(cmd);
++
++        if (pass && pass[0]) {
++            snprintf(cmd, sizeof(cmd), "wapi psk %s %s 3", dev, q_pass);
++            system(cmd);
+         }
+-        if (!associated) {
+-            syslog(LOG_ERR,
+-                "[%s] WiFi not associated (no carrier), skipping DHCP\n", TAG);
+-            return ERROR;
++
++        snprintf(cmd, sizeof(cmd), "wapi essid %s %s 1", dev, q_ssid);
++        system(cmd);
++
++        /* 轮询等待 4 次握手完成（BSSID 变为真实 AP MAC），最多 12 秒。
++         * 未关联就直接进入下一轮 ifdown/ifup 重置，不在 DHCP 上浪费时间。 */
++        if (!wifi_wait_associated(dev, 12000)) {
++            syslog(LOG_WARNING,
++                "[%s] Associate attempt %d timed out (no BSSID)\n",
++                TAG, attempt + 1);
++            continue;
+         }
++
++        /* 清空错误网段的静态兜底 IP，让 DHCP 从 0.0.0.0 干净发起 DISCOVER。 */
++        snprintf(cmd, sizeof(cmd), "ifconfig %s 0.0.0.0", dev);
++        system(cmd);
++
++        snprintf(cmd, sizeof(cmd), "renew %s", dev); /* DHCP */
++        system(cmd);
++
++        /* 已清空静态 IP，只有 DHCP 成功才会出现非 0 地址，据此判断成败。 */
++        if (network_wait_connected(3000) == OK) {
++            err = OK;
++            syslog(LOG_INFO, "[%s] WiFi connected: %s (attempt %d)\n",
++                TAG, network_get_ip(), attempt + 1);
++            break;
++        }
++
++        syslog(LOG_WARNING, "[%s] Associate/DHCP attempt %d failed, retrying\n",
++            TAG, attempt + 1);
+     }
+ 
+-    snprintf(cmd, sizeof(cmd), "renew %s", dev); /* DHCP */
+-    system(cmd);
++    /* 安装 DNS 兜底（DHCP 通常已下发，此处保证解析器始终可用）。 */
++    char dns_primary[64] = "223.5.5.5";
++    char dns_secondary[64] = "114.114.114.114";
++    claw_config_get("net.dns_primary", dns_primary, sizeof(dns_primary));
++    claw_config_get("net.dns_secondary", dns_secondary,
++        sizeof(dns_secondary));
++    network_set_dns(dns_primary, dns_secondary);
+ 
+-    /* Persist credentials.
+-     * P2: always write the PSK slot — even when pass is empty — so that
+-     * switching from a secured AP to an open one clears the stale PSK.
+-     * network_wifi_reconnect() would otherwise re-send the old wapi psk
+-     * command on the next boot, breaking reconnect for open networks. */
+-    agent_config_set(AGENT_CFG_KEY_WIFI_SSID, ssid);
+-    agent_config_set(AGENT_CFG_KEY_WIFI_PASS, (pass && pass[0]) ? pass : "");
++    if (err != OK) {
++        syslog(LOG_WARNING,
++            "[%s] No DHCP lease after %d attempts — check SSID/password/signal\n",
++            TAG, WIFI_CONNECT_MAX_ATTEMPTS);
++    }
++
++    /* 首次连接成功后启动断线监控线程（只启动一次），使掉线可自愈。 */
++    if (err == OK && !s_wifi_monitor_running) {
++        strncpy(s_wifi_monitor_dev, dev, sizeof(s_wifi_monitor_dev) - 1);
++        s_wifi_monitor_dev[sizeof(s_wifi_monitor_dev) - 1] = '\0';
++        s_wifi_monitor_running = true;
++
++        pthread_attr_t attr;
++        pthread_attr_init(&attr);
++        pthread_attr_setstacksize(&attr, 4096);
++        if (pthread_create(&s_wifi_monitor_thread, &attr,
++                wifi_monitor_thread, NULL) == 0) {
++            pthread_setname_np(s_wifi_monitor_thread, "wifi_mon");
++        } else {
++            s_wifi_monitor_running = false;
++            syslog(LOG_WARNING, "[%s] Failed to start WiFi monitor\n", TAG);
++        }
++        pthread_attr_destroy(&attr);
++    }
+ 
+-    int err = network_wait_connected(15000);
+-    if (err == OK)
+-        syslog(LOG_INFO, "[%s] WiFi connected: %s\n", TAG, network_get_ip());
+-    else
+-        syslog(LOG_WARNING, "[%s] No IP after 15s — check SSID/password\n", TAG);
+     return err;
+ }
+ 
++int network_wifi_connect(const char* iface, const char* ssid,
++    const char* pass)
++{
++    pthread_mutex_lock(&s_wifi_connect_mutex);
++    int ret = network_wifi_connect_locked(iface, ssid, pass);
++    pthread_mutex_unlock(&s_wifi_connect_mutex);
++    return ret;
++}
++
+ int network_wifi_reconnect(void)
+ {
+     char ssid[64] = { 0 };
+     char pass[128] = { 0 };
++
++    pthread_mutex_lock(&s_wifi_connect_mutex);
+     if (agent_config_get(AGENT_CFG_KEY_WIFI_SSID, ssid, sizeof(ssid)) != OK || !ssid[0]) {
+         syslog(LOG_WARNING,
+             "[%s] No saved WiFi credentials. Use CLI: set_wifi <ssid> <pass>\n",
+             TAG);
++        pthread_mutex_unlock(&s_wifi_connect_mutex);
+         return ERROR;
+     }
++
+     agent_config_get(AGENT_CFG_KEY_WIFI_PASS, pass, sizeof(pass));
+-    return network_wifi_connect(NULL, ssid, pass);
++    syslog(LOG_INFO, "[%s] Reconnecting with saved WiFi credentials\n", TAG);
++
++    /* 自动重连必须复用手工配网的完整关联和 DHCP 流程。调用内部实现
++     * 可保持同一把锁，避免启动线程与 CLI 同时重配 wlan0。 */
++    int ret = network_wifi_connect_locked(NULL, ssid, pass);
++    pthread_mutex_unlock(&s_wifi_connect_mutex);
++    return ret;
+ }
+ #endif
+diff --git a/src/infra/vela_tls.c b/src/infra/vela_tls.c
+index 0b36760..5c609a7 100644
+--- a/src/infra/vela_tls.c
++++ b/src/infra/vela_tls.c
+@@ -285,6 +285,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
+             != 0) {
+             syslog(LOG_ERR, "[%s] net_connect %s:%s ret=0x%x\n",
+                 TAG, host, port, -ret);
++            printf("[tls] net_connect %s:%s ret=-0x%04x\n", host, port, -ret);
+             return VELA_TLS_ERR_CONNECT;
+         }
+     }
+@@ -352,6 +353,11 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
+     mbedtls_ssl_conf_authmode(&ctx->cfg, MBEDTLS_SSL_VERIFY_OPTIONAL);
+     mbedtls_ssl_conf_rng(&ctx->cfg, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
+ 
++    /* 注：曾尝试通告 MFL=4096 缩小证书分片，但真实错误码显示握手失败是
++     * NET_RECV_FAILED(-0x4c，连接被 RST/关闭)，而非大包接收停顿。MFL 是较
++     * 老的 TLS 扩展，现代 HTTPS 服务器常不支持、收到反而可能拒绝连接，故
++     * 移除，交由 TCP 窗口缩放处理入向大包。 */
++
+     /* Read timeout is handled at the socket level via SO_RCVTIMEO,
+      * not via mbedtls_ssl_conf_read_timeout + mbedtls_net_recv_timeout,
+      * because select()/poll() inside mbedtls_net_recv_timeout fails on
+@@ -359,6 +365,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
+ 
+     if ((ret = mbedtls_ssl_setup(&ctx->ssl, &ctx->cfg)) != 0) {
+         syslog(LOG_ERR, "[%s] ssl_setup ret=0x%x\n", TAG, -ret);
++        printf("[tls] ssl_setup ret=-0x%04x (likely OOM)\n", -ret);
+         return VELA_TLS_ERR_HANDSHAKE;
+     }
+ 
+@@ -379,6 +386,7 @@ static int tls_ctx_connect(tls_ctx_t* ctx, const char* host, const char* port)
+             char err_buf[128];
+             mbedtls_strerror(ret, err_buf, sizeof(err_buf));
+             syslog(LOG_ERR, "[%s] ssl_handshake ret=-0x%04x: %s\n", TAG, -ret, err_buf);
++            printf("[tls] ssl_handshake ret=-0x%04x: %s\n", -ret, err_buf);
+ #else
+             syslog(LOG_ERR, "[%s] ssl_handshake ret=-0x%04x\n", TAG, -ret);
+ #endif
+diff --git a/src/voice/voice_channel.c b/src/voice/voice_channel.c
+index 8487250..c639de7 100644
+--- a/src/voice/voice_channel.c
++++ b/src/voice/voice_channel.c
+@@ -531,6 +531,33 @@ static void* asr_and_dispatch(void* arg)
+         syslog(LOG_INFO, "[%s] ASR result: %s\n", TAG, text);
+         printf("ASR: %s\n", text);
+ 
++        /* 语音唤醒词门控：唤醒词固定为"你好，openvela"。其英文核心
++         * "openvela" 在中文 ASR 结果里最稳定，故以它为准（兼容被分词成
++         * "open vela" 的情况，忽略大小写）。识别文本必须包含唤醒词才会
++         * 触发对话，避免环境噪声误唤醒；唤醒词之后的内容作为真正的用户
++         * 指令送入 Agent。 */
++        char* wk = strcasestr(text, "openvela");
++        size_t wlen = 8; /* strlen("openvela") */
++        if (!wk) {
++            wk = strcasestr(text, "open vela");
++            wlen = 9; /* strlen("open vela") */
++        }
++        if (!wk) {
++            syslog(LOG_INFO,
++                "[%s] Wake word 'openvela' not detected, ignoring\n", TAG);
++            printf("（未检测到唤醒词\"你好，openvela\"，已忽略）\n");
++            free(pcm);
++            return NULL;
++        }
++
++        /* 跳过唤醒词及其后的分隔符（空格与英文标点）。 */
++        wk += wlen;
++        while (*wk == ' ' || *wk == ',' || *wk == '.' || *wk == ':') {
++            wk++;
++        }
++        /* 唤醒词之后没有内容时，本次仅作唤醒，用友好问候占位。 */
++        const char* content = (*wk != '\0') ? wk : "你好";
++
+         agent_msg_t msg;
+ 
+         memset(&msg, 0, sizeof(msg));
+@@ -538,7 +565,7 @@ static void* asr_and_dispatch(void* arg)
+             sizeof(msg.channel) - 1);
+         strncpy(msg.chat_id, "voice",
+             sizeof(msg.chat_id) - 1);
+-        msg.content = strdup(text);
++        msg.content = strdup(content);
+         if (msg.content) {
+             message_bus_push_inbound(&msg);
+         }

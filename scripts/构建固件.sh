@@ -65,24 +65,34 @@ case "${build_target}" in
     defconfig_source="${OPENVELA_ROOT}/packages/ai_agent/defconfigs/esp32s3-eye/esp32s3-eye_defconfig"
     defconfig_dir="${OPENVELA_ROOT}/nuttx/boards/xtensa/esp32s3/esp32s3-eye/configs/ai_agent"
     defconfig_target="${defconfig_dir}/defconfig"
+    hal_dir="${OPENVELA_ROOT}/nuttx/arch/xtensa/src/esp32s3/esp-hal-3rdparty"
 
     if ((dry_run == 1)); then
       echo "+ mkdir -p ${defconfig_dir}"
-      echo "+ install -m 0644 ${defconfig_source} ${defconfig_target}"
+      echo "+ cmp -s ${defconfig_source} ${defconfig_target} || install -m 0644 ${defconfig_source} ${defconfig_target}"
     else
       mkdir -p "${defconfig_dir}"
-      install -m 0644 "${defconfig_source}" "${defconfig_target}"
+      if ! cmp -s "${defconfig_source}" "${defconfig_target}"; then
+        install -m 0644 "${defconfig_source}" "${defconfig_target}"
+      fi
     fi
 
     if ((clean_build == 1)); then
       run_command "${OPENVELA_ROOT}/build.sh" esp32s3-eye:ai_agent distclean
-      if ((dry_run == 1)); then
-        echo "+ bash ${OPENVELA_ROOT}/packages/ai_agent/fix_esp32s3.sh &"
-      else
-        bash "${OPENVELA_ROOT}/packages/ai_agent/fix_esp32s3.sh" &
-        fix_pid=$!
-        trap 'kill "${fix_pid}" 2>/dev/null || true' EXIT
-      fi
+    elif [[ ! -d "${hal_dir}" ]]; then
+      # 上一次构建若在 HAL 克隆期间中断，残留依赖文件会继续引用已删除
+      # 的源码。此时通过官方 distclean 恢复一致状态。
+      run_command "${OPENVELA_ROOT}/build.sh" esp32s3-eye:ai_agent distclean
+    fi
+
+    if ((dry_run == 1)); then
+      echo "+ bash ${OPENVELA_ROOT}/packages/ai_agent/fix_esp32s3.sh &"
+    else
+      # 修补脚本既可立即处理已有 HAL，也可在 clean build 时等待新 HAL
+      # 克隆完成。增量构建不得主动删除 HAL，否则配置未变化时不会重建。
+      bash "${OPENVELA_ROOT}/packages/ai_agent/fix_esp32s3.sh" &
+      fix_pid=$!
+      trap 'kill "${fix_pid}" 2>/dev/null || true' EXIT
     fi
 
     run_command "${OPENVELA_ROOT}/build.sh" esp32s3-eye:ai_agent "-j${OPENVELA_JOBS}"

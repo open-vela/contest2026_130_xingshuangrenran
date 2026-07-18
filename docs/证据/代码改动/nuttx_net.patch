@@ -1,0 +1,71 @@
+diff --git a/net/netdev/netdev_default.c b/net/netdev/netdev_default.c
+index 5d60616f19d..bde93f5744f 100644
+--- a/net/netdev/netdev_default.c
++++ b/net/netdev/netdev_default.c
+@@ -68,7 +68,10 @@ FAR struct net_driver_s *netdev_default(void)
+     {
+       /* Is the interface in the "up" state? */
+ 
+-      if (IFF_IS_RUNNING(dev->d_flags) != 0)
++      /* 同 netdev_findbyaddr：Wi-Fi 关联后 carrier 可能未置位，放宽为
++       * 按 IFF_UP 选择默认出网设备，避免默认设备查找失败。 */
++
++      if (IFF_IS_UP(dev->d_flags) != 0)
+         {
+           /* Return a reference to the first device that we find in the UP
+            * state (but not the loopback device unless it is the only
+diff --git a/net/netdev/netdev_findbyaddr.c b/net/netdev/netdev_findbyaddr.c
+index 198c15f5ef5..37210931a4f 100644
+--- a/net/netdev/netdev_findbyaddr.c
++++ b/net/netdev/netdev_findbyaddr.c
+@@ -85,7 +85,11 @@ netdev_prefixlen_findby_lipv4addr(in_addr_t lipaddr, FAR int8_t *prefixlen)
+     {
+       /* Is the interface in the "up" state? */
+ 
+-      if (IFF_IS_RUNNING(dev->d_flags) != 0 &&
++      /* ESP32-S3 Wi-Fi 驱动关联成功后未能稳定置位 IFF_RUNNING(carrier)，
++       * 但接口已 UP 且已分配 IPv4 地址。放宽为按 IFF_UP 判定可路由，避免
++       * 关联成功却因 carrier 缺失导致出网 ENETUNREACH。 */
++
++      if (IFF_IS_UP(dev->d_flags) != 0 &&
+           !net_ipv4addr_cmp(dev->d_ipaddr, INADDR_ANY))
+         {
+ #ifndef CONFIG_ROUTE_LONGEST_MATCH
+diff --git a/net/udp/udp_sendto_buffered.c b/net/udp/udp_sendto_buffered.c
+index 0e9fa2087f1..a88c5bd3e59 100644
+--- a/net/udp/udp_sendto_buffered.c
++++ b/net/udp/udp_sendto_buffered.c
+@@ -295,9 +295,12 @@ static int sendto_next_transfer(FAR struct udp_conn_s *conn)
+ 
+   /* Make sure that the device is in the UP state */
+ 
+-  if (IFF_IS_RUNNING(dev->d_flags) == 0)
++  /* Wi-Fi 关联后 carrier 可能未置位；接口 UP 即允许发送，避免 UDP
++   * (含 DHCP DISCOVER)因 IFF_RUNNING 缺失而 EHOSTUNREACH。 */
++
++  if (IFF_IS_UP(dev->d_flags) == 0)
+     {
+-      nwarn("WARNING: device is not RUNNING\n");
++      nwarn("WARNING: device is not UP\n");
+       return -EHOSTUNREACH;
+     }
+ 
+diff --git a/net/udp/udp_sendto_unbuffered.c b/net/udp/udp_sendto_unbuffered.c
+index ad72c150726..96f8ef083e6 100644
+--- a/net/udp/udp_sendto_unbuffered.c
++++ b/net/udp/udp_sendto_unbuffered.c
+@@ -457,9 +457,12 @@ ssize_t psock_udp_sendto(FAR struct socket *psock, FAR const void *buf,
+ 
+   /* Make sure that the device is in the UP state */
+ 
+-  if (IFF_IS_RUNNING(state.st_dev->d_flags) == 0)
++  /* 同 buffered 版本：放宽为按 IFF_UP 判定，避免 Wi-Fi carrier 未置位
++   * 导致 UDP/DHCP 发送 EHOSTUNREACH。 */
++
++  if (IFF_IS_UP(state.st_dev->d_flags) == 0)
+     {
+-      nwarn("WARNING: device is DOWN\n");
++      nwarn("WARNING: device is not UP\n");
+       return -EHOSTUNREACH;
+     }
+ 
